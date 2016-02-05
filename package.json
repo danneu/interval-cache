@@ -1,0 +1,29 @@
+{
+  "name": "interval-cache",
+  "version": "0.0.1",
+  "description": "A simple library for caching stuff in memory at intervals in the background",
+  "author": "Dan Neumann <danrodneu@gmail.com> (https://github.com/danneu)",
+  "homepage": "https://github.com/danneu/interval-cache",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/danneu/interval-cache"
+  },
+  "main": "src/index.js",
+  "scripts": {
+    "test": "mocha --reporter spec"
+  },
+  "engines": {
+    "node": "5.x"
+  },
+  "keywords": [
+    "cache"
+  ],
+  "dependencies": {
+    "better-assert": "^1.0.2"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "chai": "^3.5.0",
+    "mocha": "^2.4.5"
+  }
+}
