@@ -1,6 +1,11 @@
 
 # interval-cache
 
+[![NPM version](https://badge.fury.io/js/interval-cache.svg)](http://badge.fury.io/js/interval-cache)
+[![Dependency Status](https://david-dm.org/danneu/interval-cache.svg)](https://david-dm.org/danneu/interval-cache)
+
+[![NPM](https://nodei.co/npm/interval-cache.png?downloads=true&downloadRank=true&stars=true)](https://nodei.co/npm/interval-cache/)
+
 A simple Node library for caching stuff in memory at intervals in the background.
 It's just a wrapper around `setTimeout`.
 
