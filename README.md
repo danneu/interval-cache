@@ -24,12 +24,14 @@ but you don't want to bring in a more sophisticated cache solution just for them
 The perfect example use-case is the "Forum Stats" box that forums often
 have on their homepage.
 
-    const IntervalCache = require('interval-cache');
+``` javascript
+const IntervalCache = require('interval-cache');
 
-    const cache = new IntervalCache()
-      .every('stats', 1000 * 30, () => database.getStats(), {});
+const cache = new IntervalCache()
+  .every('stats', 1000 * 30, () => database.getStats(), {});
 
-    cache.get('stats');
+cache.get('stats');
+```
 
 ## Quickstart
 
@@ -79,12 +81,14 @@ options object.
 
 Defaults:
 
-    const cache = new IntervalCache({
-      // If true, cache.get(key) will throw an error if the key does not
-      // exist in the cache. Prevents typos, recommended for development,
-      // i.e. process.env.NODE_ENV === 'production'
-      throwIfKeyNotFound: false
-    });
+``` javascript
+const cache = new IntervalCache({
+  // If true, cache.get(key) will throw an error if the key does not
+  // exist in the cache. Prevents typos, recommended for development,
+  // i.e. process.env.NODE_ENV === 'production'
+  throwIfKeyNotFound: false
+});
+```
 
 An IntervalCache instance has these methods:
 
