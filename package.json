@@ -13,7 +13,7 @@
     "test": "mocha --reporter spec"
   },
   "engines": {
-    "node": "5.x"
+    "node": ">=5.x"
   },
   "keywords": [
     "cache"
