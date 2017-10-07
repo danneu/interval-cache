@@ -1,4 +1,3 @@
-
 # interval-cache
 
 [![NPM version](https://badge.fury.io/js/interval-cache.svg)](http://badge.fury.io/js/interval-cache)
@@ -6,137 +5,101 @@
 
 [![NPM](https://nodei.co/npm/interval-cache.png?downloads=true&downloadRank=true&stars=true)](https://nodei.co/npm/interval-cache/)
 
-A simple Node library for caching stuff in memory at intervals in the background.
-It's just a wrapper around `setTimeout`.
+A simple cache for Node that updates its keys in a concurrent background loop.
 
-Works with Express, Koa, and anything else.
-
-## General Idea
-
-In a fledging web project, I quickly get to a point where I have some 
-lightweight caching needs. This library aims to be the lightweight solution,
-a simple way to eliminate the most trivial database queries.
-
-This library addresses the basic needs where: 
-
-- You want to cache various data (k/v) once or in some refresh loop
-- Storing the cache in process memory is good enough
-- Requests never wait for cache updates (which happen in the background)
-- This data doesn't need to be evicted from the cache because it's long-term
-- You have some database queries that only have to run every once in a while,
-but you don't want to bring in a more sophisticated cache solution just for them.
-
-The perfect example use-case is the "Forum Stats" box that forums often
-have on their homepage.
-
-``` javascript
-const IntervalCache = require('interval-cache');
-
-const cache = new IntervalCache()
-  .every('stats', 1000 * 30, () => database.getStats(), {});
-
-cache.get('stats');
-```
+- Each key of the cache has its own refresh interval and a async function that fetches the latest value (e.g. runs an expensive database query).
+- At each key's interval, their async function is run which returns a promise.
+  - On success, the key's value is updated.
+  - On error, it logs to stderr, the key's value is unchanged, and it will try again next time.
+- Fetching values is always instant.
 
 ## Quickstart
 
-Instantiate an IntervalCache instance in your own module and register the
-run-once and run-at-an-interval tasks.
-
 ``` javascript
-// my-cache.js
+// cache.js
+const Cache = require('interval-cache')
 
-const IntervalCache = require('interval-cache');
-
-module.exports = new IntervalCache({ throwIfKeyNotFound: true })
-  // Query the forum staff on server boot since it almost never changes
-  .once('staff', () => database.getStaffMembers(), [])
-  // Refresh the forum's list of the latest 10 posts every 10 seconds
-  .every('latest-posts', 1000 * 10, () => database.getLatestPosts(), 0)
-  // Refresh the forum's user-count every 1.5 minutes (alternate delay syntax)
-  .every('user-count', { mins: 1, secs: 30 }, () => database.getUserCount(), 0)
+module.exports = new Cache()
+  // Recount database users every 30 seconds
+  .every('user-count', 1000 * 30, () => {
+    return db.query('select count(*) from users')
+  }, 0)
+  // Update sitemap every 5 minutes
+  .every('all-urls', 1000 * 60 * 5, () => listUrls(), [])
+  // Start the tick loop
+  .start()
 ```
 
-Require your instance module wherever you need to access the cache values.
+The idea is that requests should never have to wait on cache access.
 
 ``` javascript
-// routes.js
+const cache = require('./cache')
 
-const app = require('express')();
-const myCache = require('./my-cache');
+router.get('/', async (ctx) => {
+  ctx.type = 'html'
+  ctx.body = `<p>User count: ${cache.get('user-count')}</p>`
+})
 
-app.get('/staff', (req, res) => {
-  const users = myCache.get('staff');
-  res.render('staff.html', { users });
-});
-
-app.get('/stats', (req, res) => {
-  const userCount = myCache.get('user-count');
-  const latestPosts = myCache.get('latest-posts');
-  res.render('stats.html', { userCount, latestPosts });
-});
-
-app.listen(3000, () => console.log('Listening on 3000...'));
+router.get('/sitemap.txt', async (ctx) => {
+  ctx.type = 'text'
+  ctx.body = cache.get('all-urls').join('\n')
+})
 ```
 
 ## API
 
-When instantiating an IntervalCache object, you can pass in an optional 
-options object.
-
-Defaults:
-
-``` javascript
-const cache = new IntervalCache({
-  // If true, cache.get(key) will throw an error if the key does not
-  // exist in the cache. Prevents typos, recommended for development,
-  // i.e. process.env.NODE_ENV === 'production'
-  throwIfKeyNotFound: false
-});
-```
-
 An IntervalCache instance has these methods:
 
-#### `.get(key::Str)`
+### `.get(key) -> any`
 
 Get the current cached value for the given key.
 
-- Returns anything.
-- Returns `undefined` if key does not exist. 
-- Throws an error if (key does not exist and `opts.throwIfKeyNotFound === true`).
+### `.set(key, value) -> Cache`
 
-#### `.once(key::Str, getPromise::Fn, initValue)`
+Updates a key and resets the interval.
 
-Register a task that updates the cache value and then never runs again.
+If `.set()` is called while a key is calculating its next value,
+the calculated value will be discarded once it's finished since `.set()`
+is fresher.
 
-- Returns the instance.
-- `getPromise` must be a function that returns a Promise.
-- `initValue` will be the cached value until the Promise is fulfilled.
-It can be any value except `undefined`.
-- Note: Currently does not retry upon Promise rejection.
+### `.update(key, (oldValue) => newValue) -> Cache`
 
-#### `.every(key::Str, delay:Int, getPromise::Fn, initValue)`
+A convenience function for updating a cache key based on its previous value.
+
+### `.every(key, milliseconds, stepAsync, initValue) -> Cache`
 
 Register a task that updates the cache value at the given millisecond interval.
 
-- Returns the instance.
-- `delay` is how often to update the cache. It can either be an integer
-(milliseconds) or it can be a convenience object that has 1 or more
-of the keys `millis | secs | mins | hours`:
+- `stepAsync` is an async function `stepAsync(prevValue) -> Promise<nextValue>`.
+- If `stepAsync` returns a rejected promise, the cache value is not updated,
+  and it will run wait the full interval before trying again.
+- `initValue` is the initial key value until `stepAsync` resolves.
 
-    Example:
+### `.once(key, stepAsync, initValue) -> Cache`
 
-        .every(k, 500, ...)                                           === 500 ms
-        .every(k, { millis: 500 }, ...)                               === 500 ms
-        .every(k, { secs: 45 }, ...)                                  === 45000 ms
-        .every(k, { mins: 1, secs: 30 }, ...)                         === 90000 ms
-        .every(k, { hours: 1, mins: 15, secs: 30, millis: 750 }, ...) === 4530750 ms
+Register a key that updates just one time when the cache
+is started.
 
-- `getPromise` must be a function that returns a Promise.
-- `initValue` will be the cached value until the Promise is fulfilled.
-It can be any value except `undefined`.
-- Note: Upon Promise rejection, it does not update the cached value but
-the interval will continue to run.
+Useful for values that you want to refresh yourself with
+`Cache#refresh(key)`.
+
+### `.refresh(key) -> Promise<nextValue>`
+
+Triggers an asynchronous update. Useful when you know a key is stale and
+you want it to update now instead of waiting for the next interval.
+
+**Example:** If you regenerate your homepage cache every 60 seconds, yet a
+spambot's posts are showing up on your homepage's 'Latest 10 posts' list,
+you'd want to force a `.refresh()` any time you nuke a spambot instead of
+leaving your homepage defaced until 60 seconds rolls around again.
+
+### `.start() -> Cache`
+
+Starts the concurrent loop that schedules the `.every()` tasks to be run.
+
+### `.stop() -> Cache`
+
+Stops the loop. The cache will be frozen until it is started again.
 
 ## License
 

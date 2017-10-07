@@ -1,134 +1,156 @@
-'use strict';
-// Node
-const util = require('util');
-// 3rd party
-const assert = require('better-assert');
-// 1st party
-const belt = require('./belt');
+const debug = require('debug')('interval-cache')
+const assert = require('better-assert')
 
-////////////////////////////////////////////////////////////
-
-class RegistryItem {
-  constructor(key, getPromise, initValue) {
-    assert(typeof key === 'string');
-    assert(typeof getPromise === 'function'); // must return promise
-    assert(initValue !== undefined); // must set an initial value even if just null
-    this.key = key;
-    this.currValue = initValue;
-    this.getPromise = getPromise;
-    this.lastRunAt = null;
+module.exports = class Cache {
+  constructor(clock = global) {
+    // Let us inject a clock for testing
+    this.clock = clock
+    this.intervalId = null
+    // Map of the keys that are currently running their step() function
+    // Maps key to milliseconds since epoch of lock start
+    this.locks = new Map()
+    // Mapping of key to {ms, step, lastRun, value}
+    this.tasks = Object.create(null)
+    // Avoids multiple start() calls from starting multiple loops
+    this.started = false
   }
 
-  loop() {
-    throw new Error('Must use subclass');
-  }
-}
-
-////////////////////////////////////////////////////////////
-
-class OnceRegistryItem extends RegistryItem {
-  constructor(key, getPromise, initValue) {
-    super(key, getPromise, initValue);
-  }
-
-  // Returns this instance
-  loop() {
-    const succBack = newValue => {
-      this.currValue = newValue;
-      this.lastRunAt = new Date();
-    };
-    const errBack = err => {
-      console.error(`Error while running promise of key %j`, this.key, err.stack);
-      this.lastRunAt = new Date();
-    };
-    this.getPromise().then(succBack, errBack);
-    return this;
-  }
-}
-
-////////////////////////////////////////////////////////////
-
-class EveryRegistryItem extends RegistryItem {
-  // delay is either an integer is milliseconds or a convenience object
-  constructor(key, delay, getPromise, initValue) {
-    assert(Number.isInteger(delay) || typeof delay === 'object');
-    super(key, getPromise, initValue);
-    this.ms = belt.toMilliseconds(delay);
-  }
-
-  // `ms` is optional milliseconds til next loop
+  // Starts the update loop and return the cache instance
   //
-  // Returns this instance
-  loop(ms) {
-    ms = ms || 0;
-    assert(Number.isInteger(ms));
-
-    const succBack = newValue => {
-      this.currValue = newValue;
-      this.lastRunAt = new Date();
-      this.loop(this.tilNextLoop());
-    };
-
-    const errBack = err => {
-      console.error(`Error while running promise of key %j`, this.key, err.stack);
-      this.lastRunAt = new Date();
-      this.loop(this.tilNextLoop());
-    };
-
-    setTimeout(() => this.getPromise().then(succBack, errBack), ms);
-    return this;
-  }
-
-  // Milliseconds til next loop should run
-  //
-  // Returns Int
-  tilNextLoop() {
-    if (!this.lastRunAt) return 0; // hasn't been run yet
-    const elapsed = Date.now() - this.lastRunAt.getTime();
-    return this.ms - elapsed;
-  }
-}
-
-////////////////////////////////////////////////////////////
-
-class IntervalCache {
-  constructor(opts) {
-    this.registry = new Map();
-    // Protect against typos during development
-    this.throwIfKeyNotFound = opts && opts.throwIfKeyNotFound === true;
-  }
-
-  // Returns any value, but returns undefined only if key not found
-  get(key) {
-    const item = this.registry.get(key);
-    if (!item) {
-      if (this.throwIfKeyNotFound) {
-        throw new Error(util.format('KeyNotFound %j', key));
-      }
-      return undefined;
+  // The default resolution in 1000ms which means that the
+  // cache checks for keys that need to be updated every second.
+  start(frequency = 1000) {
+    assert(Number.isInteger(frequency))
+    debug('cache starting...')
+    if (this.started) {
+      return this
     }
-    return item.currValue;
+    this.started = true
+    this.intervalId = this.clock.setInterval(() => this.tick(), frequency)
+    return this
   }
 
-  // Returns this instance
-  once(key, getPromise, initValue) {
-    if (this.registry.has(key)) throw new Error(`DuplicateKey %j`, key);
-    const item = new OnceRegistryItem(key, getPromise, initValue).loop();
-    this.registry.set(key, item);
-    return this;
+  stop() {
+    debug('cache stopping...')
+    this.started = false
+    this.clock.clearInterval(this.intervalId)
+    this.intervalId = null
+    return this
   }
 
-  // Returns this instance
-  every(key, ms, getPromise, initValue) {
-    if (this.registry.has(key)) throw new Error(`DuplicateKey %j`, key);
-    const item = new EveryRegistryItem(key, ms, getPromise, initValue).loop();
-    this.registry.set(key, item);
-    return this;
+  // Check each task's .lastRun timestamp to see if it needs to
+  // be step()'ed.
+  async tick() {
+    const promises = []
+
+    Object.keys(this.tasks).forEach(key => {
+      // Skip tasks that aren't yet due for a refresh
+      if (
+        this.clock.Date.now() - this.tasks[key].lastRun <
+        this.tasks[key].ms
+      ) {
+        return
+      }
+
+      promises.push(this.refresh(key))
+    })
+
+    return Promise.all(promises)
+  }
+
+  get(key) {
+    assert(typeof key === 'string')
+    // Handle nonexistent key
+    if (!this.tasks[key]) {
+      return undefined
+    }
+    return this.tasks[key].value
+  }
+
+  // Synchronous updates
+  //
+  // These update a task's value and reset the interval.
+
+  set(key, value) {
+    assert(typeof key === 'string')
+    debug(`[set] ${key} = %j`, value)
+    this.tasks[key].value = value
+    this.tasks[key].lastRun = this.clock.Date.now()
+    return this
+  }
+
+  // transform is a function (oldValue) => newValue
+  update(key, transform) {
+    assert(typeof key === 'string')
+    assert(typeof transform === 'function')
+    return this.set(key, transform(this.get(key)))
+  }
+
+  // Trigger asynchronous update
+
+  // Returns Promise<nextValue>
+  //
+  // Run's the task's step() promise.
+  // - Ensures each task is running only once
+  // - If .set()/.update() update task's value while step() is running,
+  //   the step() result is discarded.
+  async refresh(key) {
+    assert(typeof key === 'string')
+    debug(`[refresh] refreshing ${key}...`)
+    // Refresh is already in flight, so do nothing
+    if (this.locks.has(key)) {
+      debug(
+        `[refresh] --bail-- lock taken for ${key}. lock age = ${Date.now() -
+          this.locks.get(key)}ms`
+      )
+      return undefined
+    }
+
+    // Grab lock
+    this.locks.set(key, Date.now())
+
+    const { step, lastRun: prevRun, value: prevValue } = this.tasks[key]
+
+    // If anything goes wrong, our next value is simply our prev value
+    let nextValue = prevValue
+    try {
+      nextValue = await step(prevValue)
+    } catch (err) {
+      // On error, we do nothing but hope the next interval is more successful
+      console.error(`[IntervalCache] Error updating cache key "${key}"`, err)
+    } finally {
+      // Release lock
+      this.locks.delete(key)
+    }
+
+    // If lastRun changed while we were step()'ing, then
+    // .set() was used, so discard this result and return the fresher value
+    if (prevRun !== this.tasks[key].lastRun) {
+      debug(`[refresh] --bail-- prevRun !== lastRun`)
+      return this.get(key)
+    }
+
+    // step() was successful and uninterrupted, so now we can update our state.
+    debug(`[refresh] --ok-- setting ${key} = %j`, nextValue)
+    this.set(key, nextValue)
+
+    return nextValue
+  }
+
+  // Returns Cache instance for chaining
+  every(key, ms, step, initValue) {
+    assert(typeof key === 'string')
+    assert(typeof step === 'function')
+    assert(Number.isInteger(ms))
+    // lastRun starts at 0 so that it always runs on first start() loop
+    this.tasks[key] = { ms, step, lastRun: 0, value: initValue }
+    return this
+  }
+
+  once(key, step, initValue) {
+    assert(typeof key === 'string')
+    assert(typeof step === 'function')
+    this.tasks[key] = { ms: Date.now(), step, lastRun: 0, value: initValue }
+    return this
   }
 }
-
-////////////////////////////////////////////////////////////
-// API
-////////////////////////////////////////////////////////////
-
-module.exports = IntervalCache;
