@@ -1,8 +1,7 @@
 {
   "name": "interval-cache",
-  "version": "0.0.2",
-  "description":
-    "a cache with synchronous fetches but asynchronous background updates",
+  "version": "1.0.0",
+  "description": "a cache with synchronous fetches but asynchronous background updates",
   "author": "Dan Neumann <danrodneu@gmail.com> (https://github.com/danneu)",
   "homepage": "https://github.com/danneu/interval-cache",
   "repository": {
@@ -10,8 +9,7 @@
     "url": "https://github.com/danneu/interval-cache"
   },
   "scripts": {
-    "test":
-      "echo 'npm test -- --watch for watching' && node ./node_modules/.bin/ava",
+    "test": "echo 'npm test -- --watch for watching' && node ./node_modules/.bin/ava",
     "patch": "npm version patch && npm publish",
     "minor": "npm version minor && npm publish",
     "major": "npm version major && npm publish",
@@ -23,7 +21,9 @@
   "engines": {
     "node": ">=8.0"
   },
-  "keywords": ["cache"],
+  "keywords": [
+    "cache"
+  ],
   "dependencies": {
     "better-assert": "^1.0.2",
     "debug": "^3.1.0"
