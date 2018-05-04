@@ -7,42 +7,47 @@
 
 A simple cache for Node that updates its keys in a concurrent background loop.
 
-- Each key of the cache has its own refresh interval and a async function that fetches the latest value (e.g. runs an expensive database query).
-- At each key's interval, their async function is run which returns a promise.
-  - On success, the key's value is updated.
-  - On error, it logs to stderr, the key's value is unchanged, and it will try again next time.
-- Fetching values is always instant.
+*   `cache.get(key)` is synchronous.
+*   Each key of the cache has its own refresh interval and a async function that fetches the latest value (e.g. runs an expensive database query).
+*   At each key's interval, their async function is run which returns a promise.
+    *   On success, the key's value is updated.
+    *   On error, it logs to stderr, the key's value is unchanged, and it will try again next time.
 
 ## Quickstart
 
-``` javascript
+```javascript
 // cache.js
 const Cache = require('interval-cache')
 
 module.exports = new Cache()
-  // Recount database users every 30 seconds
-  .every('user-count', 1000 * 30, () => {
-    return db.query('select count(*) from users')
-  }, 0)
-  // Update sitemap every 5 minutes
-  .every('all-urls', 1000 * 60 * 5, () => listUrls(), [])
-  // Start the tick loop
-  .start()
+    // Recount database users every 30 seconds
+    .every(
+        'user-count',
+        1000 * 30,
+        () => {
+            return db.query('select count(*) from users')
+        },
+        0
+    )
+    // Update sitemap every 5 minutes
+    .every('all-urls', 1000 * 60 * 5, () => listUrls(), [])
+    // Start the tick loop
+    .start()
 ```
 
 The idea is that requests should never have to wait on cache access.
 
-``` javascript
+```javascript
 const cache = require('./cache')
 
 router.get('/', async (ctx) => {
-  ctx.type = 'html'
-  ctx.body = `<p>User count: ${cache.get('user-count')}</p>`
+    ctx.type = 'html'
+    ctx.body = `<p>User count: ${cache.get('user-count')}</p>`
 })
 
 router.get('/sitemap.txt', async (ctx) => {
-  ctx.type = 'text'
-  ctx.body = cache.get('all-urls').join('\n')
+    ctx.type = 'text'
+    ctx.body = cache.get('all-urls').join('\n')
 })
 ```
 
@@ -70,10 +75,10 @@ A convenience function for updating a cache key based on its previous value.
 
 Register a task that updates the cache value at the given millisecond interval.
 
-- `stepAsync` is an async function `stepAsync(prevValue) -> Promise<nextValue>`.
-- If `stepAsync` returns a rejected promise, the cache value is not updated,
-  and it will run wait the full interval before trying again.
-- `initValue` is the initial key value until `stepAsync` resolves.
+*   `stepAsync` is an async function `stepAsync(prevValue) -> Promise<nextValue>`.
+*   If `stepAsync` returns a rejected promise, the cache value is not updated,
+    and it will run wait the full interval before trying again.
+*   `initValue` is the initial key value until `stepAsync` resolves.
 
 ### `.once(key, stepAsync, initValue) -> Cache`
 
