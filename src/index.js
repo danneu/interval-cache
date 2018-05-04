@@ -22,11 +22,15 @@ module.exports = class Cache {
     start(frequency = 1000) {
         assert(Number.isInteger(frequency))
         debug('cache starting...')
+
+        // Noop if already started
         if (this.started) {
             return this
         }
+
         this.started = true
         this.intervalId = this.clock.setInterval(() => this.tick(), frequency)
+
         return this
     }
 
@@ -43,31 +47,35 @@ module.exports = class Cache {
     async tick() {
         const promises = []
 
-        Object.keys(this.tasks).forEach(key => {
+        for (const key of Object.keys(this.tasks)) {
             // Skip tasks that aren't yet due for a refresh
             if (this.clock.Date.now() - this.tasks[key].lastRun < this.tasks[key].ms) {
-                return
+                continue
             }
 
             promises.push(this.refresh(key))
-        })
+        }
 
         return Promise.all(promises)
     }
 
+    // Synchrnously return a key's value.
     get(key) {
         assert(typeof key === 'string')
+
         // Handle nonexistent key
         if (!this.tasks[key]) {
             return undefined
         }
+
         return this.tasks[key].value
     }
 
-    // Synchronous updates
+    // SYNCHRONOUS UPDATES
     //
     // These update a task's value and reset the interval.
 
+    // Synchronously set a key to a given value.
     set(key, value) {
         assert(typeof key === 'string')
         debug(`[set] ${key} = %j`, value)
@@ -76,15 +84,21 @@ module.exports = class Cache {
         return this
     }
 
-    // transform is a function (oldValue) => newValue
+    // Synchronously apply a transformation on a key's value.
+    //
+    // `transform` is a function (oldValue) => newValue
+    // `transform` will received undefined if key does not exist.
     update(key, transform) {
         assert(typeof key === 'string')
         assert(typeof transform === 'function')
+
         return this.set(key, transform(this.get(key)))
     }
 
-    // Trigger asynchronous update
+    // ASYNCHRONOUS UPDATES
 
+    // Trigger asynchronous update
+    //
     // Returns Promise<nextValue>
     //
     // Run's the task's step() promise.
@@ -134,20 +148,29 @@ module.exports = class Cache {
         return nextValue
     }
 
+    // TASKS
+
+    // Create a key that updates at an interval indefinitely.
+    //
     // Returns Cache instance for chaining
     every(key, ms, step, initValue) {
         assert(typeof key === 'string')
         assert(typeof step === 'function')
         assert(Number.isInteger(ms))
+
         // lastRun starts at 0 so that it always runs on first start() loop
         this.tasks[key] = { ms, step, lastRun: 0, value: initValue }
+
         return this
     }
 
+    // Create a key that updates once and never again.
     once(key, step, initValue) {
         assert(typeof key === 'string')
         assert(typeof step === 'function')
+
         this.tasks[key] = { ms: Date.now(), step, lastRun: 0, value: initValue }
+
         return this
     }
 }
